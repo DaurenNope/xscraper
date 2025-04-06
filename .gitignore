@@ -1,0 +1,26 @@
+# Environment variables
+.env
+
+# Configuration files containing secrets
+accounts_config.json
+service_account.json
+
+# State file
+last_seen_ids.json
+
+# twscrape database
+accounts.db
+accounts.db-journal
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Log files
+*.log
+
+# IDE / OS files
+.vscode/
+.idea/
+*.DS_Store
