@@ -1,0 +1,18 @@
+[
+  {
+    "username": "YourTwitterUsername1",
+    "password": "dummy_password_not_really_used_if_cookies_provided",
+    "email": "dummy_email_not_really_used_if_cookies_provided@example.com",
+    "email_password": "dummy_email_password_not_really_used_if_cookies_provided",
+    "cookies": "auth_token=YOUR_ACCOUNT_1_AUTH_TOKEN_HERE; ct0=YOUR_ACCOUNT_1_CT0_TOKEN_HERE",
+    "proxy": null 
+  },
+  {
+    "username": "YourTwitterUsername2",
+    "password": null,
+    "email": null,
+    "email_password": null,
+    "cookies": "auth_token=YOUR_ACCOUNT_2_AUTH_TOKEN_HERE; ct0=YOUR_ACCOUNT_2_CT0_TOKEN_HERE",
+    "proxy": "http://user:pass@your.proxy.server:port" 
+  }
+] 
