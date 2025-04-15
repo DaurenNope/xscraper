@@ -6,3 +6,8 @@ google-auth-oauthlib
 google-auth-httplib2
 pytz
 twscrape
+google-generativeai
+backoff
+pandas
+praw
+beautifulsoup4

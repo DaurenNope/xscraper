@@ -25,7 +25,10 @@ ACCOUNTS_FILE = os.getenv('ACCOUNTS_CONFIG_FILE', 'accounts_config.json')
 USERNAMES_FILE = os.getenv('USERNAMES_FILE', 'usernames.json')
 STATE_FILE = os.getenv('STATE_FILE', 'last_seen_ids.json')
 TWEET_FETCH_LIMIT = int(os.getenv('TWEET_FETCH_LIMIT', '30'))
-DELAY_BETWEEN_USERS_SECONDS = int(os.getenv('DELAY_BETWEEN_USERS_SECONDS', '10'))
+MIN_DELAY_BETWEEN_USERS_SECONDS = float(os.getenv('MIN_DELAY_BETWEEN_USERS_SECONDS', '5'))
+MAX_DELAY_BETWEEN_USERS_SECONDS = float(os.getenv('MAX_DELAY_BETWEEN_USERS_SECONDS', '20'))
+MIN_DELAY_BEFORE_FETCH_SECONDS = float(os.getenv('MIN_DELAY_BEFORE_FETCH_SECONDS', '1'))
+MAX_DELAY_BEFORE_FETCH_SECONDS = float(os.getenv('MAX_DELAY_BEFORE_FETCH_SECONDS', '5'))
 BASE_SLEEP_INTERVAL_HOURS = float(os.getenv('BASE_SLEEP_INTERVAL_HOURS', '4'))
 RANDOM_SLEEP_RANGE_HOURS = float(os.getenv('RANDOM_SLEEP_RANGE_HOURS', '1'))
 
@@ -143,7 +146,7 @@ async def run_scrape_cycle(api, target_usernames_list, last_seen_state, initial_
     header = [
         "Username", "User ID", "Display Name", "Tweet Timestamp", "Tweet Text", "Tweet URL",
         "Likes", "Retweets", "Replies", "Quotes", "Bookmarks", "Views",
-        "Tweet Type", "Conversation ID"
+        "Tweet Type", "Conversation ID" # <-- Reverted Header
     ]
     try:
         current_header = worksheet.row_values(1)
@@ -181,6 +184,12 @@ async def run_scrape_cycle(api, target_usernames_list, last_seen_state, initial_
                 # Fetch User's Recent Tweets & Replies
                 # print(f"  Fetching recent tweets and replies for @{username} (User ID: {user_id_str})...")
                 try:
+                    # --- Add delay before fetching ---
+                    pre_fetch_delay = random.uniform(MIN_DELAY_BEFORE_FETCH_SECONDS, MAX_DELAY_BEFORE_FETCH_SECONDS)
+                    # print(f"    Waiting {pre_fetch_delay:.2f}s before fetch...") # Verbose
+                    await asyncio.sleep(pre_fetch_delay)
+                    # --- End Add delay before fetching ---
+
                     fetched_tweets = await gather(api.user_tweets_and_replies(user.id, limit=TWEET_FETCH_LIMIT))
                     new_tweets = [t for t in fetched_tweets if t.id > last_seen_id]
 
@@ -201,19 +210,42 @@ async def run_scrape_cycle(api, target_usernames_list, last_seen_state, initial_
                             utc_time = tweet.date
                             local_time = utc_time.astimezone(TARGET_TIMEZONE)
                             tweet_timestamp = local_time.strftime('%Y-%m-%d %H:%M:%S %Z%z')
-                            tweet_text = tweet.rawContent
-                            tweet_url = tweet.url
-                            tweet_type = "Original Tweet"
-                            if tweet.retweetedTweet: tweet_type = "Retweet"
-                            elif tweet.quotedTweet: tweet_type = "Quote Tweet"
-                            elif tweet.inReplyToTweetId: tweet_type = "Reply"
-                            likes = tweet.likeCount or 0
-                            retweets = tweet.retweetCount or 0
-                            replies = tweet.replyCount or 0
-                            quotes = tweet.quoteCount or 0
-                            bookmarks = tweet.bookmarkedCount or 0
-                            views = tweet.viewCount or 0
-                            conversation_id_str = str(tweet.conversationId) if tweet.conversationId else "N/A"
+
+                            # Determine Tweet Type and Extract Content
+                            if tweet.retweetedTweet:
+                                tweet_type = "Retweet"
+                                # Use original tweet's content if available
+                                original_tweet = tweet.retweetedTweet
+                                tweet_text = original_tweet.rawContent if original_tweet else "[Retweeted content not available]"
+                                tweet_url = original_tweet.url if original_tweet else tweet.url # Prefer original URL
+                                likes = original_tweet.likeCount or 0
+                                retweets = original_tweet.retweetCount or 0
+                                replies = original_tweet.replyCount or 0
+                                quotes = original_tweet.quoteCount or 0
+                                bookmarks = original_tweet.bookmarkCount or 0 # Note: might be different attribute name
+                                views = original_tweet.viewCount or 0
+                                conversation_id_str = str(original_tweet.conversationId) if original_tweet and original_tweet.conversationId else "N/A"
+                            else:
+                                # Original, Quote, or Reply
+                                tweet_text = tweet.rawContent
+                                tweet_url = tweet.url
+                                likes = tweet.likeCount or 0
+                                retweets = tweet.retweetCount or 0
+                                replies = tweet.replyCount or 0
+                                quotes = tweet.quoteCount or 0
+                                bookmarks = tweet.bookmarkedCount or 0 # Note: might be different attribute name
+                                views = tweet.viewCount or 0
+                                conversation_id_str = str(tweet.conversationId) if tweet.conversationId else "N/A"
+
+                                if tweet.quotedTweet:
+                                    tweet_type = "Quote Tweet"
+                                elif tweet.inReplyToTweetId:
+                                    tweet_type = "Reply"
+                                else:
+                                    tweet_type = "Original Tweet"
+
+                            # --- Consolidate Row Creation (common fields) ---
+                            # Note: User details (username, user_id_str, user_display_name) and timestamp are set outside this block
 
                             row = [
                                 username, user_id_str, user_display_name, tweet_timestamp,
@@ -252,7 +284,10 @@ async def run_scrape_cycle(api, target_usernames_list, last_seen_state, initial_
 
         # --- Delay Between Users --- #
         # print(f"Waiting {DELAY_BETWEEN_USERS_SECONDS} seconds...") # Verbose
-        await asyncio.sleep(DELAY_BETWEEN_USERS_SECONDS)
+        inter_user_delay = random.uniform(MIN_DELAY_BETWEEN_USERS_SECONDS, MAX_DELAY_BETWEEN_USERS_SECONDS)
+        # print(f"  Waiting {inter_user_delay:.2f}s before next user...") # Verbose
+        await asyncio.sleep(inter_user_delay)
+        # --- End Delay Between Users ---
 
     # --- Sort collected rows --- #
     if all_rows_to_append:
