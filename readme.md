@@ -1,24 +1,29 @@
-# Twitter Scraper to Google Sheets
+# Multi-Platform Content Analyzer and Rewriter
 
-This project scrapes tweets and replies from a specified list of Twitter users and appends new findings to a Google Sheet. It runs continuously, polling for new tweets periodically and using a state file to avoid duplicates.
+This project reads raw content scraped from different platforms (currently Reddit, potentially Twitter), analyzes it, filters relevant items, rewrites them using the Gemini API in English and Russian with a specific brand voice (Rahmet Labs), and saves the results to a local CSV file and a Google Sheet.
 
 ## Features
 
-*   Loads target usernames from `usernames.json`.
-*   Loads Twitter account credentials (cookies recommended) from `accounts_config.json`.
-*   Uses `twscrape` library for interacting with Twitter APIs.
-*   Fetches recent tweets and replies (`limit` configurable via `.env`).
-*   Tracks last seen tweet ID per user in `last_seen_ids.json` to only process new tweets ("listening mode").
-*   Extracts tweet metadata (Likes, Retweets, Views, etc.) and categorizes tweet type (Original, Reply, Retweet, Quote).
-*   Converts timestamps to a specified timezone.
-*   Appends new, chronologically sorted tweet data to a specified Google Sheet.
-*   Runs in a continuous loop with randomized sleep intervals between cycles.
-*   Sends basic error notifications to a Telegram chat via a bot.
+*   Processes data scraped from specified Google Sheet tabs (`REDDIT_SOURCE_SHEET_NAMES` or `TWITTER_SOURCE_SHEET_NAMES` in `.env`).
+*   Handles platform-specific data processing (e.g., identifying Reddit posts).
+*   Filters content based on:
+    *   Already processed items (using URLs from local state and target Google Sheet).
+    *   Content type (e.g., 'Reddit Post', 'Original Tweet', 'Thread').
+    *   Minimum content length.
+    *   Presence of relevant keywords.
+    *   Exclusion of overly structured prompts/code.
+*   Uses Google Gemini API (`gemini-1.5-flash` by default) to rewrite filtered content into English and Russian.
+*   Applies a specific "Rahmet Labs" brand voice (direct, practical, no hype) during rewriting.
+*   Manages API calls with concurrency limits and backoff/retry logic.
+*   Saves processed and rewritten data incrementally to a platform-specific local CSV file (`REDDIT_LOCAL_STATE_FILE` or `TWITTER_LOCAL_STATE_FILE`).
+*   Syncs the final results from the local CSV to a specified target Google Sheet tab (`REDDIT_ANALYZED_SHEET_NAME` or `TWITTER_ANALYZED_SHEET_NAME`).
+*   Sends start/stop/error notifications to a Telegram chat.
 *   Configuration managed via a `.env` file.
+*   Selects platform via command-line argument (`--platform`).
 
 ## Setup
 
-1.  **Clone/Create Project:** Ensure the project directory contains `scraper.py` and the necessary config files.
+1.  **Clone/Create Project:** Ensure the project directory contains `analyzer.py`, `requirements.txt`, and the necessary example config files.
 2.  **Install Dependencies:**
     ```bash
     pip install -r requirements.txt
@@ -27,87 +32,63 @@ This project scrapes tweets and replies from a specified list of Twitter users a
     *   Create a Google Cloud project.
     *   Enable the Google Sheets API and Google Drive API.
     *   Create a Service Account, grant it "Editor" role.
-    *   Generate a JSON key file and save it as `service_account.json` in the project directory.
+    *   Generate a JSON key file.
+    *   Copy `service_account.json.example` to `service_account.json`.
+    *   Paste the contents of your downloaded JSON key file into `service_account.json`. **Ensure `service_account.json` is listed in your `.gitignore` file.**
 4.  **Google Sheet:**
-    *   Create a new Google Sheet.
-    *   Share the sheet with the service account's email address (found in Google Cloud Console), granting it "Editor" permissions.
+    *   Create a single Google Sheet to hold both raw scraped data and analyzed results.
+    *   **Raw Data Sheets:** Create sheets for your raw scraped data (e.g., `Sheet_Reddit_Raw`). The names must match those configured in `.env`.
+    *   **Analyzed Sheets:** The script will automatically create target sheets (e.g., `Analyzed_Reddit`) if they don't exist.
+    *   Share the entire Google Sheet file with the service account's email address (found in `client_email` of `service_account.json`), granting it "Editor" permissions.
     *   Copy the full URL of the Google Sheet.
 5.  **Telegram Bot:**
     *   Talk to BotFather on Telegram to create a new bot.
     *   Copy the **Bot Token** provided.
     *   Find the **Chat ID** of the user or group where you want notifications sent (e.g., using `@userinfobot`).
-6.  **Configure `.env`:**
-    *   Create a `.env` file in the project root.
-    *   Copy the content from the example below and **fill in your actual values** for `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `GOOGLE_SHEETS_URL`.
-    *   Adjust other settings like timezone, delays, and sleep intervals if needed.
-    ```dotenv
-    # .env Example
-    TELEGRAM_BOT_TOKEN="YOUR_TELEGRAM_BOT_TOKEN_HERE"
-    TELEGRAM_CHAT_ID="YOUR_TARGET_CHAT_ID_HERE"
-    GOOGLE_SHEETS_URL="YOUR_GOOGLE_SHEETS_URL_HERE"
-    SERVICE_ACCOUNT_FILE_PATH="service_account.json"
-    TARGET_TIMEZONE="Asia/Almaty"
-    DELAY_BETWEEN_USERS_SECONDS="15"
-    ACCOUNTS_CONFIG_FILE="accounts_config.json"
-    USERNAMES_FILE="usernames.json"
-    STATE_FILE="last_seen_ids.json"
-    TWEET_FETCH_LIMIT="30"
-    BASE_SLEEP_INTERVAL_HOURS="4"
-    RANDOM_SLEEP_RANGE_HOURS="1"
-    ```
-7.  **Configure `accounts_config.json`:**
-    *   Create `accounts_config.json`.
-    *   Add JSON objects for each Twitter account you want to use, including a unique `username` (for identification) and the `cookies` string. Dummy values can be used for password/email if using cookies.
-    ```json
-    // accounts_config.json Example
-    [
-      {
-        "username": "AccountLabel1",
-        "password": "dummy_pass",
-        "email": "dummy@example.com",
-        "email_password": "dummy_pw",
-        "cookies": "auth_token=TOKEN_A; ct0=TOKEN_B",
-        "proxy": null // Optional: "http://user:pass@host:port"
-      },
-      {
-        "username": "AccountLabel2",
-        "password": "dummy_pass2",
-        "email": "dummy2@example.com",
-        "email_password": "dummy_pw2",
-        "cookies": "auth_token=TOKEN_X; ct0=TOKEN_Y",
-        "proxy": null
-      }
-    ]
-    ```
-8.  **Configure `usernames.json`:**
-    *   Create `usernames.json`.
-    *   Add the target Twitter usernames (without `@`) in a JSON list under the `target_users` key.
-    ```json
-    // usernames.json Example
-    {
-      "target_users": [
-        "username1",
-        "username2"
-      ]
-    }
-    ```
+6.  **Gemini API Key:**
+    *   Obtain an API key for Google Gemini (e.g., via Google AI Studio).
+7.  **Configure `.env`:**
+    *   Copy `.env.example` to `.env`.
+    *   Open the `.env` file and **fill in your actual values** for:
+        *   `TELEGRAM_BOT_TOKEN`
+        *   `TELEGRAM_CHAT_ID`
+        *   `GOOGLE_SHEETS_URL` (URL of the single sheet containing raw and analyzed data)
+        *   `GEMINI_API_KEY`
+        *   `SERVICE_ACCOUNT_FILE_PATH` (defaults to `service_account.json`, change if needed)
+    *   **Configure Platform-Specific Settings:**
+        *   `REDDIT_SOURCE_SHEET_NAMES`: Comma-separated names of sheets containing raw Reddit data (e.g., `Sheet_Reddit_Raw`).
+        *   `REDDIT_ANALYZED_SHEET_NAME`: Name for the target sheet for analyzed Reddit data (e.g., `Analyzed_Reddit`).
+        *   `REDDIT_LOCAL_STATE_FILE`: Filename for the local CSV storing processed Reddit data (e.g., `reddit_processed_state.csv`).
+        *   *(Add similar `TWITTER_...` variables if/when Twitter processing is added)*
+    *   Adjust other settings like `TARGET_TIMEZONE`, `GEMINI_CONCURRENT_REQUESTS` if needed.
+    *   **Ensure `.env` is listed in your `.gitignore` file.**
 
-## Running the Scraper
+## Running the Analyzer
 
-Once configured, run the script from the project directory:
+Once configured, run the script from the project directory, specifying the platform:
 
-The script will run continuously in a loop, checking for new tweets at randomized intervals (based on `.env` settings).
+**For Reddit:**
+```bash
+python analyzer.py --platform reddit
+```
 
-To run it persistently on a server (even after disconnecting), use tools like `tmux`, `screen`, or configure it as a `systemd` service.
+**For Twitter (if implemented):**
+```bash
+# python analyzer.py --platform twitter
+```
+
+The script will perform the analysis, filtering, rewriting, and syncing steps, then exit. It is designed to be run manually or via a scheduler (like cron).
 
 ## Files
 
-*   `scraper.py`: The main Python script.
+*   `analyzer.py`: The main Python script for processing and rewriting.
+*   `scrapers/`: Directory containing platform-specific scraping scripts (e.g., `reddit_scraper.py`). These are run separately to populate the raw data sheets.
 *   `.env`: Stores configuration variables (API keys, URLs, settings). **DO NOT COMMIT TO GIT.**
-*   `accounts_config.json`: Stores Twitter account credentials. **DO NOT COMMIT TO GIT.**
 *   `service_account.json`: Google Cloud credentials. **DO NOT COMMIT TO GIT.**
-*   `usernames.json`: List of target Twitter usernames to scrape.
-*   `last_seen_ids.json`: Stores the ID of the last processed tweet for each user to prevent duplicates. **GENERATED AUTOMATICALLY.** Can be ignored by Git if desired.
 *   `requirements.txt`: List of Python dependencies.
 *   `.gitignore`: Specifies files/directories for Git to ignore.
-*   `accounts.db` / `accounts.db-journal`: Database files generated by `twscrape` for session management. **GENERATED AUTOMATICALLY.** Ignored by Git.
+*   `*_processed_state.csv`: Local CSV files storing processed data (e.g., `reddit_processed_state.csv`). **GENERATED AUTOMATICALLY.** Should be ignored by Git.
+*   `.env.example`: Example structure for the `.env` file.
+*   `service_account.json.example`: Example structure/placeholder for Google credentials.
+*   `README.md`: This file.
+*   *(Other config files like `accounts_config.json`, `usernames.json` might be used by specific scrapers)*
